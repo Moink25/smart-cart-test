@@ -57,11 +57,6 @@ app.use(
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/images", express.static(path.join(__dirname, "public", "images")));
-// Add additional path to handle double-slash issue
-app.use(
-  "/images/image",
-  express.static(path.join(__dirname, "public", "images"))
-);
 
 // Add request logging for debugging
 if (DEBUG) {
