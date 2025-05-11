@@ -1,0 +1,1 @@
+[{"userId":"2","items":[{"id":"1","name":"Milk","price":2.99,"rfidTag":"A1B2C3D4","quantity":1},{"id":"2","name":"Bread","price":1.99,"rfidTag":"E5F6G7H8","quantity":2}],"total":6.97,"deviceId":"cart_001"}]

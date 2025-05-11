@@ -1,0 +1,660 @@
+const express = require("express");
+const router = express.Router();
+const fs = require("fs");
+const path = require("path");
+const authRoutes = require("./auth");
+
+// Get carts from file
+const getCartsFromFile = () => {
+  const cartsFilePath = path.join(__dirname, "..", "data", "carts.json");
+  if (fs.existsSync(cartsFilePath)) {
+    return JSON.parse(fs.readFileSync(cartsFilePath));
+  }
+  return [];
+};
+
+// Save carts to file
+const saveCartsToFile = (carts) => {
+  const cartsFilePath = path.join(__dirname, "..", "data", "carts.json");
+  fs.writeFileSync(cartsFilePath, JSON.stringify(carts));
+};
+
+// Get products from file
+const getProductsFromFile = () => {
+  const productsFilePath = path.join(__dirname, "..", "data", "products.json");
+  if (fs.existsSync(productsFilePath)) {
+    return JSON.parse(fs.readFileSync(productsFilePath));
+  }
+  return [];
+};
+
+// Get users from file
+const getUsersFromFile = () => {
+  const usersFilePath = path.join(__dirname, "..", "data", "users.json");
+  if (fs.existsSync(usersFilePath)) {
+    return JSON.parse(fs.readFileSync(usersFilePath));
+  }
+  return [];
+};
+
+// Save products to file
+const saveProductsToFile = (products) => {
+  const productsFilePath = path.join(__dirname, "..", "data", "products.json");
+  fs.writeFileSync(productsFilePath, JSON.stringify(products));
+};
+
+// Get user's cart
+router.get("/", authRoutes.authenticateToken, (req, res) => {
+  const carts = getCartsFromFile();
+  const userCart = carts.find((cart) => cart.userId === req.user.id) || {
+    userId: req.user.id,
+    items: [],
+    total: 0,
+  };
+
+  res.json(userCart);
+});
+
+// Add item to cart
+router.post("/add", authRoutes.authenticateToken, (req, res) => {
+  const { productId, quantity = 1 } = req.body;
+
+  if (!productId) {
+    return res.status(400).json({ message: "Product ID is required" });
+  }
+
+  // Get product details
+  const products = getProductsFromFile();
+  const product = products.find((p) => p.id === productId);
+
+  if (!product) {
+    return res.status(404).json({ message: "Product not found" });
+  }
+
+  if (product.quantity < quantity) {
+    return res.status(400).json({ message: "Not enough stock available" });
+  }
+
+  // Update cart
+  const carts = getCartsFromFile();
+  const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+
+  if (cartIndex === -1) {
+    // Create new cart
+    carts.push({
+      userId: req.user.id,
+      items: [{ ...product, quantity }],
+      total: parseFloat((product.price * quantity).toFixed(2)),
+    });
+  } else {
+    // Update existing cart
+    const cart = carts[cartIndex];
+    const itemIndex = cart.items.findIndex((item) => item.id === productId);
+
+    if (itemIndex === -1) {
+      cart.items.push({ ...product, quantity });
+    } else {
+      cart.items[itemIndex].quantity += quantity;
+    }
+
+    // Recalculate total
+    cart.total = cart.items.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0
+    );
+    cart.total = parseFloat(cart.total.toFixed(2));
+  }
+
+  saveCartsToFile(carts);
+
+  const updatedCart = carts.find((cart) => cart.userId === req.user.id);
+  res.json(updatedCart);
+});
+
+// Remove item from cart
+router.post("/remove", authRoutes.authenticateToken, (req, res) => {
+  const { productId, quantity = 1 } = req.body;
+
+  if (!productId) {
+    return res.status(400).json({ message: "Product ID is required" });
+  }
+
+  // Get carts
+  const carts = getCartsFromFile();
+  const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+
+  if (cartIndex === -1) {
+    return res.status(404).json({ message: "Cart not found" });
+  }
+
+  const cart = carts[cartIndex];
+  const itemIndex = cart.items.findIndex((item) => item.id === productId);
+
+  if (itemIndex === -1) {
+    return res.status(404).json({ message: "Item not found in cart" });
+  }
+
+  // Update quantity or remove item
+  if (cart.items[itemIndex].quantity <= quantity) {
+    cart.items.splice(itemIndex, 1);
+  } else {
+    cart.items[itemIndex].quantity -= quantity;
+  }
+
+  // Recalculate total
+  cart.total = cart.items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
+  cart.total = parseFloat(cart.total.toFixed(2));
+
+  // Remove cart if empty
+  if (cart.items.length === 0) {
+    carts.splice(cartIndex, 1);
+    saveCartsToFile(carts);
+    return res.json({ userId: req.user.id, items: [], total: 0 });
+  }
+
+  saveCartsToFile(carts);
+  res.json(cart);
+});
+
+// Clear cart
+router.delete("/clear", authRoutes.authenticateToken, (req, res) => {
+  const carts = getCartsFromFile();
+  const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+
+  if (cartIndex !== -1) {
+    carts.splice(cartIndex, 1);
+    saveCartsToFile(carts);
+  }
+
+  res.json({ userId: req.user.id, items: [], total: 0 });
+});
+
+// Clear cart for physical device
+router.post("/clear", (req, res) => {
+  const { cartId, deviceId } = req.body;
+  let userId = "2"; // Default to customer ID if no cartId provided
+
+  // Get carts
+  const carts = getCartsFromFile();
+
+  // Find cart by cartId or deviceId
+  let cartIndex = -1;
+  if (cartId) {
+    cartIndex = carts.findIndex((cart) => cart.id === cartId);
+    if (cartIndex !== -1) {
+      userId = carts[cartIndex].userId;
+    }
+  }
+
+  // If cartId not found, try deviceId mapping (implement your device-to-user mapping)
+
+  if (cartIndex !== -1) {
+    carts.splice(cartIndex, 1);
+    saveCartsToFile(carts);
+  }
+
+  // Return success response
+  res.json({
+    success: true,
+    message: "Cart cleared successfully",
+    userId: userId,
+    items: [],
+    total: 0,
+  });
+});
+
+// Simulate RFID scan
+router.post("/rfid-scan", authRoutes.authenticateToken, (req, res) => {
+  const { rfidTag, action } = req.body;
+
+  if (!rfidTag || !action) {
+    return res
+      .status(400)
+      .json({ message: "RFID tag and action are required" });
+  }
+
+  if (action !== "add" && action !== "remove") {
+    return res
+      .status(400)
+      .json({ message: 'Invalid action. Must be "add" or "remove"' });
+  }
+
+  // Get product by RFID tag
+  const products = getProductsFromFile();
+  const product = products.find((p) => p.rfidTag === rfidTag);
+
+  if (!product) {
+    return res.status(404).json({ message: "Product not found" });
+  }
+
+  // Update cart based on action
+  const carts = getCartsFromFile();
+  const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+
+  if (cartIndex === -1 && action === "add") {
+    // Create new cart
+    carts.push({
+      userId: req.user.id,
+      items: [{ ...product, quantity: 1 }],
+      total: product.price,
+    });
+  } else if (cartIndex !== -1) {
+    const cart = carts[cartIndex];
+    const itemIndex = cart.items.findIndex((item) => item.id === product.id);
+
+    if (action === "add") {
+      if (itemIndex === -1) {
+        cart.items.push({ ...product, quantity: 1 });
+      } else {
+        cart.items[itemIndex].quantity += 1;
+      }
+      cart.total = parseFloat((cart.total + product.price).toFixed(2));
+    } else if (action === "remove" && itemIndex !== -1) {
+      if (cart.items[itemIndex].quantity > 1) {
+        cart.items[itemIndex].quantity -= 1;
+      } else {
+        cart.items.splice(itemIndex, 1);
+      }
+      cart.total = parseFloat((cart.total - product.price).toFixed(2));
+
+      // Remove cart if empty
+      if (cart.items.length === 0) {
+        carts.splice(cartIndex, 1);
+        saveCartsToFile(carts);
+        return res.json({
+          message: `Product ${
+            action === "add" ? "added to" : "removed from"
+          } cart`,
+          cart: { userId: req.user.id, items: [], total: 0 },
+          product,
+        });
+      }
+    } else if (action === "remove" && itemIndex === -1) {
+      return res.status(404).json({ message: "Item not found in cart" });
+    }
+  } else if (cartIndex === -1 && action === "remove") {
+    return res.status(404).json({ message: "Cart not found" });
+  }
+
+  saveCartsToFile(carts);
+
+  const updatedCart = carts.find((cart) => cart.userId === req.user.id) || {
+    userId: req.user.id,
+    items: [],
+    total: 0,
+  };
+
+  res.json({
+    message: `Product ${action === "add" ? "added to" : "removed from"} cart`,
+    cart: updatedCart,
+    product,
+  });
+});
+
+// RFID scan from physical device (no auth required)
+router.post("/device/rfid-scan", (req, res) => {
+  const { rfidTag, action = "add", deviceId, userId = "2" } = req.body;
+
+  if (!rfidTag) {
+    return res.status(400).json({
+      success: false,
+      message: "RFID tag is required",
+      rfidTag,
+    });
+  }
+
+  // Get product by RFID tag
+  const products = getProductsFromFile();
+  const product = products.find(
+    (p) => p.rfidTag.toLowerCase() === rfidTag.toLowerCase()
+  );
+
+  if (!product) {
+    return res.status(404).json({
+      success: false,
+      message: "Product not found",
+      rfidTag,
+    });
+  }
+
+  // Check inventory
+  if (action === "add" && product.quantity <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Product out of stock",
+      product,
+    });
+  }
+
+  // Update inventory
+  if (action === "add") {
+    product.quantity -= 1;
+  } else if (action === "remove") {
+    product.quantity += 1;
+  }
+  saveProductsToFile(products);
+
+  // Update cart
+  const carts = getCartsFromFile();
+  const cartIndex = carts.findIndex((cart) => cart.userId === userId);
+
+  let updatedCart;
+
+  if (cartIndex === -1 && action === "add") {
+    // Create new cart with ID
+    const newCart = {
+      id: `cart_${Date.now()}`,
+      userId: userId,
+      deviceId: deviceId || null,
+      items: [{ ...product, quantity: 1 }],
+      total: product.price,
+    };
+    carts.push(newCart);
+    updatedCart = newCart;
+  } else if (cartIndex !== -1) {
+    const cart = carts[cartIndex];
+
+    // Add deviceId if not present
+    if (deviceId && !cart.deviceId) {
+      cart.deviceId = deviceId;
+    }
+
+    // Add cart ID if not present
+    if (!cart.id) {
+      cart.id = `cart_${Date.now()}`;
+    }
+
+    const itemIndex = cart.items.findIndex((item) => item.id === product.id);
+
+    if (action === "add") {
+      if (itemIndex === -1) {
+        cart.items.push({ ...product, quantity: 1 });
+      } else {
+        cart.items[itemIndex].quantity += 1;
+      }
+      cart.total = parseFloat((cart.total + product.price).toFixed(2));
+    } else if (action === "remove" && itemIndex !== -1) {
+      if (cart.items[itemIndex].quantity > 1) {
+        cart.items[itemIndex].quantity -= 1;
+      } else {
+        cart.items.splice(itemIndex, 1);
+      }
+      cart.total = parseFloat((cart.total - product.price).toFixed(2));
+
+      // Remove cart if empty
+      if (cart.items.length === 0) {
+        carts.splice(cartIndex, 1);
+        saveCartsToFile(carts);
+        return res.json({
+          success: true,
+          message: `Product ${
+            action === "add" ? "added to" : "removed from"
+          } cart`,
+          cart: { id: cart.id, userId: userId, items: [], total: 0 },
+          product,
+        });
+      }
+    } else if (action === "remove" && itemIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Item not found in cart",
+      });
+    }
+
+    updatedCart = cart;
+  } else if (cartIndex === -1 && action === "remove") {
+    return res.status(404).json({
+      success: false,
+      message: "Cart not found",
+    });
+  }
+
+  saveCartsToFile(carts);
+
+  // Notify connected clients via socket if available
+  if (req.app.io) {
+    req.app.io.emit('product_scanned', { 
+      product, 
+      action, 
+      userId, 
+      deviceId 
+    });
+    
+    req.app.io.emit('cart_updated', { 
+      userId, 
+      carts 
+    });
+  }
+
+  res.json({
+    success: true,
+    message: `Product ${action === "add" ? "added to" : "removed from"} cart`,
+    cart: updatedCart,
+    product,
+  });
+});
+
+// Connect physical cart to user
+router.post("/connect-device", authRoutes.authenticateToken, (req, res) => {
+  const { deviceId } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).json({
+      success: false,
+      message: "Device ID is required",
+    });
+  }
+
+  // Get carts
+  const carts = getCartsFromFile();
+
+  // Check if device is already connected to another user
+  const existingCartIndex = carts.findIndex(
+    (cart) => cart.deviceId === deviceId && cart.userId !== req.user.id
+  );
+
+  if (existingCartIndex !== -1) {
+    // Transfer cart to this user
+    const existingCart = carts[existingCartIndex];
+    existingCart.userId = req.user.id;
+    saveCartsToFile(carts);
+
+    // Emit socket event to notify about connection
+    req.app.io.emit("cart_connected", {
+      success: true,
+      userId: req.user.id,
+      deviceId: deviceId,
+      message: "Physical cart connected successfully",
+    });
+
+    return res.json({
+      success: true,
+      message: "Cart connection initiated",
+      cart: existingCart,
+    });
+  }
+
+  // Find user's cart
+  let userCartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+
+  if (userCartIndex !== -1) {
+    // Add deviceId to user's existing cart
+    carts[userCartIndex].deviceId = deviceId;
+  } else {
+    // Create new empty cart with deviceId
+    carts.push({
+      id: `cart_${Date.now()}`,
+      userId: req.user.id,
+      deviceId: deviceId,
+      items: [],
+      total: 0,
+    });
+    userCartIndex = carts.length - 1;
+  }
+
+  saveCartsToFile(carts);
+
+  // Attempt to send a request to the NodeMCU cart device
+  // This is a placeholder - implement actual NodeMCU communication logic here
+  // For demonstration, we'll simulate a successful connection after a delay
+  setTimeout(() => {
+    req.app.io.emit("cart_connected", {
+      success: true,
+      userId: req.user.id,
+      deviceId: deviceId,
+      message: "Physical cart connected successfully",
+    });
+  }, 2000);
+
+  res.json({
+    success: true,
+    message: "Cart connection initiated",
+    cart: carts[userCartIndex],
+  });
+});
+
+// Disconnect physical cart from user
+router.post("/disconnect-device", authRoutes.authenticateToken, (req, res) => {
+  // Get carts
+  const carts = getCartsFromFile();
+
+  // Find user's cart
+  const userCartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+
+  if (userCartIndex === -1) {
+    return res.status(404).json({
+      success: false,
+      message: "Cart not found",
+    });
+  }
+
+  // Remove deviceId from cart
+  carts[userCartIndex].deviceId = null;
+
+  saveCartsToFile(carts);
+
+  res.json({
+    success: true,
+    message: "Cart disconnected successfully",
+    cart: carts[userCartIndex],
+  });
+});
+
+// Checkout process
+router.post("/checkout", authRoutes.authenticateToken, (req, res) => {
+  // Get carts
+  const carts = getCartsFromFile();
+
+  // Find user's cart
+  const userCartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+
+  if (userCartIndex === -1) {
+    return res.status(404).json({
+      success: false,
+      message: "Cart not found",
+    });
+  }
+
+  const cart = carts[userCartIndex];
+
+  // Update product inventory
+  const products = getProductsFromFile();
+
+  // Update inventory quantities
+  cart.items.forEach((item) => {
+    const productIndex = products.findIndex((p) => p.id === item.id);
+    if (productIndex !== -1) {
+      // Ensure we don't go below zero
+      products[productIndex].quantity = Math.max(
+        0,
+        products[productIndex].quantity - item.quantity
+      );
+    }
+  });
+
+  // Save updated product inventory
+  saveProductsToFile(products);
+
+  // Process items in cart
+  const orderDetails = {
+    orderId: `order_${Date.now()}`,
+    userId: req.user.id,
+    items: cart.items,
+    total: cart.total,
+    date: new Date().toISOString(),
+    deviceId: cart.deviceId || null,
+  };
+
+  // Save order details (would typically go to orders.json)
+  const ordersFilePath = path.join(__dirname, "..", "data", "orders.json");
+  let orders = [];
+
+  if (fs.existsSync(ordersFilePath)) {
+    orders = JSON.parse(fs.readFileSync(ordersFilePath));
+  }
+
+  orders.push(orderDetails);
+  fs.writeFileSync(ordersFilePath, JSON.stringify(orders));
+
+  // If this was connected to a physical cart, notify it
+  if (cart.deviceId) {
+    // Send checkout completed signal to the physical cart
+    // This is a placeholder - implement actual NodeMCU communication here
+    req.app.io.emit("checkout_complete", {
+      deviceId: cart.deviceId,
+      message: "Checkout completed successfully",
+    });
+  }
+
+  // Remove the cart
+  carts.splice(userCartIndex, 1);
+  saveCartsToFile(carts);
+
+  res.json({
+    success: true,
+    message: "Checkout successful",
+    order: orderDetails,
+  });
+});
+
+// Get cart status by device ID
+router.get("/device/:deviceId", (req, res) => {
+  const { deviceId } = req.params;
+
+  if (!deviceId) {
+    return res.status(400).json({
+      success: false,
+      message: "Device ID is required",
+    });
+  }
+
+  // Get carts
+  const carts = getCartsFromFile();
+  const cart = carts.find((cart) => cart.deviceId === deviceId);
+
+  if (!cart) {
+    return res.json({
+      success: true,
+      message: "No active cart for this device",
+      connected: false,
+      cart: null,
+    });
+  }
+
+  // Get user info
+  const users = getUsersFromFile();
+  const user = users.find((user) => user.id === cart.userId);
+
+  res.json({
+    success: true,
+    message: "Cart found",
+    connected: true,
+    cart: cart,
+    user: user ? { id: user.id, username: user.username } : null,
+  });
+});
+
+module.exports = router;
