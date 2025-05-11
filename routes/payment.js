@@ -35,6 +35,25 @@ const saveProductsToFile = (products) => {
   fs.writeFileSync(productsFilePath, JSON.stringify(products));
 };
 
+// Get user's cart or create it if it doesn't exist
+const getUserCart = (userId) => {
+  const carts = getCartsFromFile();
+  let cart = carts.find((cart) => cart.userId === userId);
+
+  // If user doesn't have a cart, create an empty one
+  if (!cart) {
+    cart = {
+      userId,
+      items: [],
+      total: 0,
+    };
+    carts.push(cart);
+    saveCartsToFile(carts);
+  }
+
+  return cart;
+};
+
 // Initialize Razorpay with valid test credentials
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_2uPofgQZUz39Kk",
@@ -47,18 +66,14 @@ router.post("/create-order", authRoutes.authenticateToken, async (req, res) => {
     // Log authenticated user info for debugging
     console.log("User authenticated for payment:", req.user);
 
-    // Get user's cart
-    const carts = getCartsFromFile();
-    console.log("All carts:", carts);
-
-    const userCart = carts.find((cart) => cart.userId === req.user.id);
-    console.log("User cart found:", userCart);
-
-    // If no cart exists for the user, create an empty one to avoid errors
-    if (!userCart) {
-      console.log("No cart found for user, responding with error");
-      return res.status(400).json({ message: "Cart is empty or not found" });
+    if (!req.user || !req.user.id) {
+      console.error("Invalid user session");
+      return res.status(401).json({ message: "Invalid user session" });
     }
+
+    // Get user's cart directly with helper function
+    const userCart = getUserCart(req.user.id);
+    console.log("User cart found:", userCart);
 
     // Validate cart items
     if (!userCart.items || userCart.items.length === 0) {
@@ -66,10 +81,39 @@ router.post("/create-order", authRoutes.authenticateToken, async (req, res) => {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
-    // Validate cart total
-    if (!userCart.total || userCart.total <= 0) {
+    // Verify cart total exists and is valid
+    if (
+      typeof userCart.total !== "number" ||
+      isNaN(userCart.total) ||
+      userCart.total <= 0
+    ) {
       console.log("Invalid cart total:", userCart.total);
-      return res.status(400).json({ message: "Invalid cart total" });
+
+      // Try to fix the total by recalculating it
+      const fixedTotal = userCart.items.reduce(
+        (sum, item) => sum + item.price * item.quantity,
+        0
+      );
+
+      if (fixedTotal > 0) {
+        userCart.total = parseFloat(fixedTotal.toFixed(2));
+
+        // Save the fixed cart
+        const carts = getCartsFromFile();
+        const cartIndex = carts.findIndex(
+          (cart) => cart.userId === req.user.id
+        );
+        if (cartIndex !== -1) {
+          carts[cartIndex] = userCart;
+        } else {
+          carts.push(userCart);
+        }
+        saveCartsToFile(carts);
+
+        console.log("Fixed cart total:", userCart.total);
+      } else {
+        return res.status(400).json({ message: "Invalid cart total" });
+      }
     }
 
     // Create order with Razorpay
@@ -119,15 +163,17 @@ router.post("/verify", authRoutes.authenticateToken, (req, res) => {
   // For this demo, we'll assume the payment is valid
 
   try {
-    // Get user's cart
-    const carts = getCartsFromFile();
-    const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
-
-    if (cartIndex === -1) {
-      return res.status(404).json({ message: "Cart not found" });
+    // Check if user is authenticated
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "Invalid user session" });
     }
 
-    const userCart = carts[cartIndex];
+    // Get user's cart
+    const userCart = getUserCart(req.user.id);
+
+    if (!userCart || !userCart.items || userCart.items.length === 0) {
+      return res.status(404).json({ message: "Cart not found or empty" });
+    }
 
     // Update inventory
     const products = getProductsFromFile();
@@ -136,7 +182,10 @@ router.post("/verify", authRoutes.authenticateToken, (req, res) => {
     userCart.items.forEach((cartItem) => {
       const productIndex = products.findIndex((p) => p.id === cartItem.id);
       if (productIndex !== -1) {
-        products[productIndex].quantity -= cartItem.quantity;
+        products[productIndex].quantity = Math.max(
+          0,
+          products[productIndex].quantity - cartItem.quantity
+        );
         inventoryUpdated = true;
       }
     });
@@ -146,8 +195,12 @@ router.post("/verify", authRoutes.authenticateToken, (req, res) => {
     }
 
     // Clear the user's cart
-    carts.splice(cartIndex, 1);
-    saveCartsToFile(carts);
+    const carts = getCartsFromFile();
+    const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+    if (cartIndex !== -1) {
+      carts.splice(cartIndex, 1);
+      saveCartsToFile(carts);
+    }
 
     res.json({
       success: true,
