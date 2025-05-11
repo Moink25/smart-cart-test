@@ -55,8 +55,8 @@ app.use(
 );
 
 // Serve static files from public directory
-app.use("/images", express.static(path.join(__dirname, "public/images")));
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/images", express.static(path.join(__dirname, "public", "images")));
 
 // Add request logging for debugging
 if (DEBUG) {
@@ -95,6 +95,8 @@ ensureDataFile("products.json", [
     price: 2.99,
     rfidTag: "A1B2C3D4",
     quantity: 20,
+    weight: 1000,
+    image: "/images/milk.jpg",
   },
   {
     id: "2",
@@ -102,6 +104,8 @@ ensureDataFile("products.json", [
     price: 1.99,
     rfidTag: "E5F6G7H8",
     quantity: 15,
+    weight: 450,
+    image: "/images/bread.jpg",
   },
   {
     id: "3",
@@ -109,6 +113,8 @@ ensureDataFile("products.json", [
     price: 3.49,
     rfidTag: "I9J0K1L2",
     quantity: 30,
+    weight: 720,
+    image: "/images/eggs.jpg",
   },
   {
     id: "4",
@@ -116,6 +122,8 @@ ensureDataFile("products.json", [
     price: 4.99,
     rfidTag: "M3N4O5P6",
     quantity: 10,
+    weight: 250,
+    image: "/images/cheese.jpg",
   },
   {
     id: "5",
@@ -123,6 +131,8 @@ ensureDataFile("products.json", [
     price: 0.99,
     rfidTag: "Q7R8S9T0",
     quantity: 50,
+    weight: 1000,
+    image: "/images/apples.jpg",
   },
 ]);
 
@@ -242,7 +252,6 @@ io.on("connection", (socket) => {
       deviceId: data.deviceId,
       message: "Successfully connected to server",
     });
-    3.366
   });
 
   // NodeMCU RFID scan event (when the physical cart scans a product)
