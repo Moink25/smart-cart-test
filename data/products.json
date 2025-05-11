@@ -6,7 +6,7 @@
     "rfidTag": "739AC2E4",
     "quantity": 20,
     "weight":250,
-    "image":"/image/milk.jpg"
+    "image":"/images/milk.jpg"
   },
   {
     "id": "2",
@@ -15,7 +15,7 @@
     "rfidTag": "A376E311",
     "quantity": 15,
     "weight":200,
-    "image":"/image/bread.jpg"
+    "image":"/images/bread.jpg"
   },
   {
     "id": "3",
@@ -24,7 +24,7 @@
     "rfidTag": "I9J0K1L2",
     "quantity": 30,
     "weight":150,
-    "image":"/image/eggs.jpg"
+    "image":"/images/eggs.jpg"
   },
   {
     "id": "4",
@@ -33,7 +33,7 @@
     "rfidTag": "C3B6D4E4",
     "quantity": 10,
     "weight":500,
-    "image":"/image/cheese.jpg"
+    "image":"/images/cheese.jpg"
   },
   {
     "id": "5",
@@ -42,6 +42,6 @@
     "rfidTag": "Q7R8S9T0",
     "quantity": 50,
     "weight":450,
-    "image":"/image/apple.jpg"
+    "image":"/images/apple.jpg"
   }
 ]
