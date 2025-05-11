@@ -206,97 +206,17 @@ router.post("/clear", (req, res) => {
   });
 });
 
-// Simulate RFID scan
-router.post("/rfid-scan", authRoutes.authenticateToken, (req, res) => {
-  const { rfidTag, action } = req.body;
-
-  if (!rfidTag || !action) {
-    return res
-      .status(400)
-      .json({ message: "RFID tag and action are required" });
-  }
-
-  if (action !== "add" && action !== "remove") {
-    return res
-      .status(400)
-      .json({ message: 'Invalid action. Must be "add" or "remove"' });
-  }
-
-  // Get product by RFID tag
-  const products = getProductsFromFile();
-  const product = products.find((p) => p.rfidTag === rfidTag);
-
-  if (!product) {
-    return res.status(404).json({ message: "Product not found" });
-  }
-
-  // Update cart based on action
-  const carts = getCartsFromFile();
-  const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
-
-  if (cartIndex === -1 && action === "add") {
-    // Create new cart
-    carts.push({
-      userId: req.user.id,
-      items: [{ ...product, quantity: 1 }],
-      total: product.price,
-    });
-  } else if (cartIndex !== -1) {
-    const cart = carts[cartIndex];
-    const itemIndex = cart.items.findIndex((item) => item.id === product.id);
-
-    if (action === "add") {
-      if (itemIndex === -1) {
-        cart.items.push({ ...product, quantity: 1 });
-      } else {
-        cart.items[itemIndex].quantity += 1;
-      }
-      cart.total = parseFloat((cart.total + product.price).toFixed(2));
-    } else if (action === "remove" && itemIndex !== -1) {
-      if (cart.items[itemIndex].quantity > 1) {
-        cart.items[itemIndex].quantity -= 1;
-      } else {
-        cart.items.splice(itemIndex, 1);
-      }
-      cart.total = parseFloat((cart.total - product.price).toFixed(2));
-
-      // Remove cart if empty
-      if (cart.items.length === 0) {
-        carts.splice(cartIndex, 1);
-        saveCartsToFile(carts);
-        return res.json({
-          message: `Product ${
-            action === "add" ? "added to" : "removed from"
-          } cart`,
-          cart: { userId: req.user.id, items: [], total: 0 },
-          product,
-        });
-      }
-    } else if (action === "remove" && itemIndex === -1) {
-      return res.status(404).json({ message: "Item not found in cart" });
-    }
-  } else if (cartIndex === -1 && action === "remove") {
-    return res.status(404).json({ message: "Cart not found" });
-  }
-
-  saveCartsToFile(carts);
-
-  const updatedCart = carts.find((cart) => cart.userId === req.user.id) || {
-    userId: req.user.id,
-    items: [],
-    total: 0,
-  };
-
-  res.json({
-    message: `Product ${action === "add" ? "added to" : "removed from"} cart`,
-    cart: updatedCart,
-    product,
-  });
-});
-
 // RFID scan from physical device (no auth required)
 router.post("/device/rfid-scan", (req, res) => {
   const { rfidTag, action = "add", deviceId, userId = "2" } = req.body;
+
+  // Log the incoming request
+  console.log("Received RFID scan from device:", {
+    rfidTag,
+    action,
+    deviceId,
+    timestamp: new Date().toISOString(),
+  });
 
   if (!rfidTag) {
     return res.status(400).json({
@@ -311,6 +231,18 @@ router.post("/device/rfid-scan", (req, res) => {
   const product = products.find(
     (p) => p.rfidTag.toLowerCase() === rfidTag.toLowerCase()
   );
+
+  // Special handling for TEST_TAG
+  if (rfidTag === "TEST_TAG") {
+    console.log("TEST_TAG detected - returning success without modifying cart");
+    return res.json({
+      success: true,
+      message:
+        "Test scan successful. This is just a test and no products were modified.",
+      test: true,
+      deviceId: deviceId || null,
+    });
+  }
 
   if (!product) {
     return res.status(404).json({
@@ -416,16 +348,16 @@ router.post("/device/rfid-scan", (req, res) => {
 
   // Notify connected clients via socket if available
   if (req.app.io) {
-    req.app.io.emit('product_scanned', { 
-      product, 
-      action, 
-      userId, 
-      deviceId 
+    req.app.io.emit("product_scanned", {
+      product,
+      action,
+      userId,
+      deviceId,
     });
-    
-    req.app.io.emit('cart_updated', { 
-      userId, 
-      carts 
+
+    req.app.io.emit("cart_updated", {
+      userId,
+      carts,
     });
   }
 
@@ -436,6 +368,128 @@ router.post("/device/rfid-scan", (req, res) => {
     product,
   });
 });
+
+// Alias for the device RFID scan endpoint to handle the simplified path
+// used by the NodeMCU (for compatibility)
+router.post("/rfid-scan", (req, res) => {
+  // Forward to the device endpoint handler
+  const { rfidTag, action = "add", deviceId } = req.body;
+
+  // If this has a token but no deviceId, it's likely a regular user request
+  if (req.headers.authorization && !deviceId) {
+    // Authenticate and handle as a user request
+    authRoutes.authenticateToken(req, res, () => {
+      // Use the user's ID from the token
+      req.body.userId = req.user.id;
+      // Handle like the regular RFID scan endpoint
+      handleUserRfidScan(req, res);
+    });
+  } else {
+    // Handle as a device request
+    console.log("Handling HTTP request from NodeMCU device");
+    // Forward to the device endpoint handler
+    req.url = "/device/rfid-scan";
+    req.app._router.handle(req, res);
+  }
+});
+
+// Helper function for user RFID scans
+function handleUserRfidScan(req, res) {
+  const { rfidTag, action = "add", userId } = req.body;
+
+  if (!rfidTag) {
+    return res.status(400).json({ message: "RFID tag is required" });
+  }
+
+  // Get product by RFID tag
+  const products = getProductsFromFile();
+  const product = products.find(
+    (p) => p.rfidTag.toLowerCase() === rfidTag.toLowerCase()
+  );
+
+  if (!product) {
+    return res.status(404).json({ message: "Product not found" });
+  }
+
+  // Check inventory
+  if (action === "add" && product.quantity <= 0) {
+    return res.status(400).json({ message: "Product out of stock" });
+  }
+
+  // Update inventory
+  if (action === "add") {
+    product.quantity -= 1;
+  } else if (action === "remove") {
+    product.quantity += 1;
+  }
+  saveProductsToFile(products);
+
+  // Update cart
+  const carts = getCartsFromFile();
+  const cartIndex = carts.findIndex((cart) => cart.userId === userId);
+
+  let updatedCart;
+
+  if (cartIndex === -1 && action === "add") {
+    // Create new cart
+    carts.push({
+      userId: userId,
+      items: [{ ...product, quantity: 1 }],
+      total: product.price,
+    });
+    updatedCart = carts[carts.length - 1];
+  } else if (cartIndex !== -1) {
+    const cart = carts[cartIndex];
+    const itemIndex = cart.items.findIndex((item) => item.id === product.id);
+
+    if (action === "add") {
+      if (itemIndex === -1) {
+        cart.items.push({ ...product, quantity: 1 });
+      } else {
+        cart.items[itemIndex].quantity += 1;
+      }
+      cart.total = parseFloat((cart.total + product.price).toFixed(2));
+    } else if (action === "remove" && itemIndex !== -1) {
+      if (cart.items[itemIndex].quantity > 1) {
+        cart.items[itemIndex].quantity -= 1;
+      } else {
+        cart.items.splice(itemIndex, 1);
+      }
+      cart.total = parseFloat((cart.total - product.price).toFixed(2));
+
+      // Remove cart if empty
+      if (cart.items.length === 0) {
+        carts.splice(cartIndex, 1);
+        saveCartsToFile(carts);
+        return res.json({ userId: userId, items: [], total: 0 });
+      }
+    } else if (action === "remove" && itemIndex === -1) {
+      return res.status(404).json({ message: "Item not found in cart" });
+    }
+
+    updatedCart = cart;
+  } else if (cartIndex === -1 && action === "remove") {
+    return res.status(404).json({ message: "Cart not found" });
+  }
+
+  saveCartsToFile(carts);
+
+  // Notify connected clients via socket if available
+  if (req.app.io) {
+    req.app.io.emit("product_scanned", {
+      product,
+      action,
+      userId,
+    });
+
+    req.app.io.emit("cart_updated", {
+      userId,
+      carts,
+    });
+  }
+
+  res.json(updatedCart);
+}
 
 // Connect physical cart to user
 router.post("/connect-device", authRoutes.authenticateToken, (req, res) => {
@@ -654,6 +708,23 @@ router.get("/device/:deviceId", (req, res) => {
     connected: true,
     cart: cart,
     user: user ? { id: user.id, username: user.username } : null,
+  });
+});
+
+// Get connected devices
+router.get("/connected-devices", authRoutes.authenticateToken, (req, res) => {
+  const carts = getCartsFromFile();
+  const connectedDevices = carts
+    .filter((cart) => cart.deviceId)
+    .map((cart) => ({
+      deviceId: cart.deviceId,
+      userId: cart.userId,
+      cartId: cart.id,
+    }));
+
+  res.json({
+    success: true,
+    devices: connectedDevices,
   });
 });
 
