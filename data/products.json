@@ -2,15 +2,15 @@
   {
     "id": "1",
     "name": "Milk",
-    "price": 2.99,
+    "price": 20,
     "rfidTag": "739AC2E4",
     "quantity": 20
   },
   {
     "id": "2",
     "name": "Bread",
-    "price": 1.99,
-    "rfidTag": "E5F6G7H8",
+    "price": 40,
+    "rfidTag": "A376E311",
     "quantity": 15
   },
   {
@@ -23,8 +23,8 @@
   {
     "id": "4",
     "name": "Cheese",
-    "price": 4.99,
-    "rfidTag": "M3N4O5P6",
+    "price": 35,
+    "rfidTag": "C3B6D4E4",
     "quantity": 10
   },
   {
