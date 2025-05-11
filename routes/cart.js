@@ -43,72 +43,102 @@ const saveProductsToFile = (products) => {
   fs.writeFileSync(productsFilePath, JSON.stringify(products));
 };
 
+// Get user's cart or create it if it doesn't exist
+const getUserCart = (userId) => {
+  const carts = getCartsFromFile();
+  let cart = carts.find((cart) => cart.userId === userId);
+
+  // If user doesn't have a cart, create an empty one
+  if (!cart) {
+    cart = {
+      userId,
+      items: [],
+      total: 0,
+    };
+    carts.push(cart);
+    saveCartsToFile(carts);
+  }
+
+  return cart;
+};
+
 // Get user's cart
 router.get("/", authRoutes.authenticateToken, (req, res) => {
-  const carts = getCartsFromFile();
-  const userCart = carts.find((cart) => cart.userId === req.user.id) || {
-    userId: req.user.id,
-    items: [],
-    total: 0,
-  };
+  try {
+    const cart = getUserCart(req.user.id);
 
-  res.json(userCart);
+    // Always make sure cart has required fields
+    if (!cart.items) cart.items = [];
+    if (cart.total === undefined) cart.total = 0;
+
+    res.json(cart);
+  } catch (error) {
+    console.error("Error getting cart:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to get cart", error: error.message });
+  }
 });
 
 // Add item to cart
 router.post("/add", authRoutes.authenticateToken, (req, res) => {
-  const { productId, quantity = 1 } = req.body;
+  try {
+    const { productId, quantity = 1 } = req.body;
 
-  if (!productId) {
-    return res.status(400).json({ message: "Product ID is required" });
-  }
+    if (!productId) {
+      return res.status(400).json({ message: "Product ID is required" });
+    }
 
-  // Get product details
-  const products = getProductsFromFile();
-  const product = products.find((p) => p.id === productId);
+    // Get product details
+    const products = getProductsFromFile();
+    const product = products.find((p) => p.id === productId);
 
-  if (!product) {
-    return res.status(404).json({ message: "Product not found" });
-  }
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
 
-  if (product.quantity < quantity) {
-    return res.status(400).json({ message: "Not enough stock available" });
-  }
+    if (product.quantity < quantity) {
+      return res.status(400).json({ message: "Not enough stock available" });
+    }
 
-  // Update cart
-  const carts = getCartsFromFile();
-  const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+    // Get or create user's cart
+    const userCart = getUserCart(req.user.id);
 
-  if (cartIndex === -1) {
-    // Create new cart
-    carts.push({
-      userId: req.user.id,
-      items: [{ ...product, quantity }],
-      total: parseFloat((product.price * quantity).toFixed(2)),
-    });
-  } else {
-    // Update existing cart
-    const cart = carts[cartIndex];
-    const itemIndex = cart.items.findIndex((item) => item.id === productId);
+    // Update the cart
+    const itemIndex = userCart.items.findIndex((item) => item.id === productId);
 
     if (itemIndex === -1) {
-      cart.items.push({ ...product, quantity });
+      // Add new item
+      userCart.items.push({ ...product, quantity });
     } else {
-      cart.items[itemIndex].quantity += quantity;
+      // Update existing item
+      userCart.items[itemIndex].quantity += quantity;
     }
 
     // Recalculate total
-    cart.total = cart.items.reduce(
+    userCart.total = userCart.items.reduce(
       (sum, item) => sum + item.price * item.quantity,
       0
     );
-    cart.total = parseFloat(cart.total.toFixed(2));
+    userCart.total = parseFloat(userCart.total.toFixed(2));
+
+    // Save updated carts
+    const carts = getCartsFromFile();
+    const cartIndex = carts.findIndex((cart) => cart.userId === req.user.id);
+    if (cartIndex !== -1) {
+      carts[cartIndex] = userCart;
+    } else {
+      carts.push(userCart);
+    }
+    saveCartsToFile(carts);
+
+    res.json(userCart);
+  } catch (error) {
+    console.error("Error adding item to cart:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to add item to cart", error: error.message });
   }
-
-  saveCartsToFile(carts);
-
-  const updatedCart = carts.find((cart) => cart.userId === req.user.id);
-  res.json(updatedCart);
 });
 
 // Remove item from cart
