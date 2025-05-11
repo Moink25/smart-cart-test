@@ -3,9 +3,25 @@ const express = require("express");
 const http = require("http");
 const socketIo = require("socket.io");
 const cors = require("cors");
+const fileUpload = require("express-fileupload");
 const jwt = require("jsonwebtoken");
 const fs = require("fs");
 const path = require("path");
+
+// Initialize debug mode
+const DEBUG = process.env.DEBUG === "true" || true;
+
+// Enhanced logging
+const logger = {
+  info: (...args) => console.log(new Date().toISOString(), "[INFO]", ...args),
+  error: (...args) =>
+    console.error(new Date().toISOString(), "[ERROR]", ...args),
+  debug: (...args) => {
+    if (DEBUG) {
+      console.log(new Date().toISOString(), "[DEBUG]", ...args);
+    }
+  },
+};
 
 // Routes
 const authRoutes = require("./routes/auth");
@@ -27,77 +43,122 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
+// Add file upload middleware
+app.use(
+  fileUpload({
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+    useTempFiles: true,
+    tempFileDir: "/tmp/",
+    createParentPath: true,
+    abortOnLimit: true,
+  })
+);
+
+// Serve static files from public directory
+app.use("/images", express.static(path.join(__dirname, "public/images")));
+app.use(express.static(path.join(__dirname, "public")));
+
+// Add request logging for debugging
+if (DEBUG) {
+  app.use((req, res, next) => {
+    logger.debug(`${req.method} ${req.url}`);
+    next();
+  });
+}
+
 // Make io available to routes
 app.io = io;
 
 // Check if data directory exists, if not create it
 const dataDir = path.join(__dirname, "data");
 if (!fs.existsSync(dataDir)) {
+  logger.info("Creating data directory...");
   fs.mkdirSync(dataDir);
-
-  // Create initial data files if they don't exist
-  if (!fs.existsSync(path.join(dataDir, "products.json"))) {
-    fs.writeFileSync(
-      path.join(dataDir, "products.json"),
-      JSON.stringify([
-        {
-          id: "1",
-          name: "Milk",
-          price: 2.99,
-          rfidTag: "A1B2C3D4",
-          quantity: 20,
-        },
-        {
-          id: "2",
-          name: "Bread",
-          price: 1.99,
-          rfidTag: "E5F6G7H8",
-          quantity: 15,
-        },
-        {
-          id: "3",
-          name: "Eggs",
-          price: 3.49,
-          rfidTag: "I9J0K1L2",
-          quantity: 30,
-        },
-        {
-          id: "4",
-          name: "Cheese",
-          price: 4.99,
-          rfidTag: "M3N4O5P6",
-          quantity: 10,
-        },
-        {
-          id: "5",
-          name: "Apples",
-          price: 0.99,
-          rfidTag: "Q7R8S9T0",
-          quantity: 50,
-        },
-      ])
-    );
-  }
-
-  if (!fs.existsSync(path.join(dataDir, "users.json"))) {
-    fs.writeFileSync(
-      path.join(dataDir, "users.json"),
-      JSON.stringify([
-        { id: "1", username: "admin", password: "admin123", role: "admin" },
-        {
-          id: "2",
-          username: "customer",
-          password: "customer123",
-          role: "customer",
-        },
-      ])
-    );
-  }
-
-  if (!fs.existsSync(path.join(dataDir, "carts.json"))) {
-    fs.writeFileSync(path.join(dataDir, "carts.json"), JSON.stringify([]));
-  }
 }
+
+// Ensure all required data files exist
+const ensureDataFile = (filename, initialData) => {
+  const filePath = path.join(dataDir, filename);
+  if (!fs.existsSync(filePath)) {
+    logger.info(`Creating ${filename} file...`);
+    fs.writeFileSync(filePath, JSON.stringify(initialData, null, 2));
+    return true;
+  }
+  return false;
+};
+
+// Create initial products if needed
+ensureDataFile("products.json", [
+  {
+    id: "1",
+    name: "Milk",
+    price: 2.99,
+    rfidTag: "A1B2C3D4",
+    quantity: 20,
+  },
+  {
+    id: "2",
+    name: "Bread",
+    price: 1.99,
+    rfidTag: "E5F6G7H8",
+    quantity: 15,
+  },
+  {
+    id: "3",
+    name: "Eggs",
+    price: 3.49,
+    rfidTag: "I9J0K1L2",
+    quantity: 30,
+  },
+  {
+    id: "4",
+    name: "Cheese",
+    price: 4.99,
+    rfidTag: "M3N4O5P6",
+    quantity: 10,
+  },
+  {
+    id: "5",
+    name: "Apples",
+    price: 0.99,
+    rfidTag: "Q7R8S9T0",
+    quantity: 50,
+  },
+]);
+
+// Create initial users if needed
+ensureDataFile("users.json", [
+  { id: "1", username: "admin", password: "admin123", role: "admin" },
+  {
+    id: "2",
+    username: "customer",
+    password: "customer123",
+    role: "customer",
+  },
+]);
+
+// Create empty carts file if needed
+ensureDataFile("carts.json", []);
+
+// Add basic endpoint to check server status
+app.get("/api/status", (req, res) => {
+  const files = {
+    products: fs.existsSync(path.join(dataDir, "products.json")),
+    users: fs.existsSync(path.join(dataDir, "users.json")),
+    carts: fs.existsSync(path.join(dataDir, "carts.json")),
+  };
+
+  res.json({
+    status: "ok",
+    version: "1.0",
+    files,
+    env: {
+      nodeEnv: process.env.NODE_ENV || "production",
+      debug: DEBUG,
+      razorpayConfigured: !!process.env.RAZORPAY_KEY_ID,
+    },
+  });
+});
 
 // Routes
 app.use("/api/auth", authRoutes);
@@ -105,13 +166,61 @@ app.use("/api/products", productRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/payment", paymentRoutes);
 
+// Add global error handler middleware
+app.use((err, req, res, next) => {
+  logger.error("Unhandled error:", err);
+
+  // Log the full error stack for debugging
+  if (DEBUG) {
+    console.error("Error stack:", err.stack);
+  }
+
+  // Handle common errors
+  if (err.name === "TokenExpiredError") {
+    return res.status(401).json({
+      message: "Your session has expired, please log in again",
+      error: "Token expired",
+    });
+  }
+
+  if (err.name === "JsonWebTokenError") {
+    return res.status(401).json({
+      message: "Invalid authentication token",
+      error: "Invalid token",
+    });
+  }
+
+  // Check for file system errors
+  if (err.code === "ENOENT") {
+    // Try to recover by creating missing data files
+    try {
+      ensureDataFile("carts.json", []);
+      ensureDataFile("products.json", []);
+      ensureDataFile("users.json", []);
+      logger.info("Recovered from missing data file");
+    } catch (recoverError) {
+      logger.error("Failed to recover from file system error:", recoverError);
+    }
+
+    return res.status(500).json({
+      message: "Data file was missing, please try again",
+      error: DEBUG ? err.message : "Server error",
+    });
+  }
+
+  res.status(500).json({
+    message: "An unexpected error occurred",
+    error: DEBUG ? err.message : "Server error",
+  });
+});
+
 // Socket.IO for real-time updates
 io.on("connection", (socket) => {
-  console.log("New client connected");
+  logger.info("New client connected:", socket.id);
 
   // NodeMCU cart connection
   socket.on("nodemcu_connect", (data) => {
-    console.log("NodeMCU cart connection request:", data);
+    logger.debug("NodeMCU cart connection request:", data);
 
     if (!data.deviceId) {
       socket.emit("error", { message: "Device ID is required" });
@@ -133,6 +242,7 @@ io.on("connection", (socket) => {
       deviceId: data.deviceId,
       message: "Successfully connected to server",
     });
+    3.366
   });
 
   // NodeMCU RFID scan event (when the physical cart scans a product)
@@ -254,7 +364,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("Client disconnected");
+    logger.info("Client disconnected:", socket.id);
 
     // If this was a NodeMCU device, notify clients
     if (socket.deviceId) {
@@ -324,5 +434,5 @@ function processRfidScan(product, action, userId, deviceId = null) {
 // Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.info(`Server running on port ${PORT}`);
 });
