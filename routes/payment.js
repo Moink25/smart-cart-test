@@ -35,10 +35,10 @@ const saveProductsToFile = (products) => {
   fs.writeFileSync(productsFilePath, JSON.stringify(products));
 };
 
-// Initialize Razorpay
+// Initialize Razorpay with valid test credentials
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_your_key_id",
-  key_secret: process.env.RAZORPAY_KEY_SECRET || "your_key_secret",
+  key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_2uPofgQZUz39Kk",
+  key_secret: process.env.RAZORPAY_KEY_SECRET || "eBwb1G3nKpGXAzFHR9a1vH0e",
 });
 
 // Create order for payment
@@ -60,22 +60,33 @@ router.post("/create-order", authRoutes.authenticateToken, async (req, res) => {
       payment_capture: 1, // auto capture
     };
 
-    const order = await razorpay.orders.create(options);
+    console.log("Creating Razorpay order with options:", options);
 
-    res.json({
-      orderId: order.id,
-      amount: order.amount / 100, // Convert back to main currency unit
-      currency: order.currency,
-      cartTotal: userCart.total,
-    });
+    try {
+      const order = await razorpay.orders.create(options);
+      console.log("Order created successfully:", order);
+
+      res.json({
+        orderId: order.id,
+        amount: order.amount / 100, // Convert back to main currency unit
+        currency: order.currency,
+        cartTotal: userCart.total,
+      });
+    } catch (razorpayError) {
+      console.error("Razorpay error:", razorpayError);
+      // Send more detailed error information for debugging
+      res.status(500).json({
+        message: "Failed to create Razorpay order",
+        error: razorpayError.message,
+        details: razorpayError,
+      });
+    }
   } catch (error) {
     console.error("Error creating order:", error);
-    res
-      .status(500)
-      .json({
-        message: "Failed to create payment order",
-        error: error.message,
-      });
+    res.status(500).json({
+      message: "Failed to create payment order",
+      error: error.message,
+    });
   }
 });
 
@@ -132,9 +143,9 @@ router.post("/verify", authRoutes.authenticateToken, (req, res) => {
   }
 });
 
-// Get payment key
+// Get payment key - use the same test key as above
 router.get("/key", (req, res) => {
-  res.json({ key: process.env.RAZORPAY_KEY_ID || "rzp_test_your_key_id" });
+  res.json({ key: process.env.RAZORPAY_KEY_ID || "rzp_test_2uPofgQZUz39Kk" });
 });
 
 module.exports = router;
