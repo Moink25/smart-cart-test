@@ -19,6 +19,15 @@ const saveProductsToFile = (products) => {
   fs.writeFileSync(productsFilePath, JSON.stringify(products));
 };
 
+// Ensure public/images directory exists
+const ensureImagesDirectory = () => {
+  const imagesDir = path.join(__dirname, "..", "public", "images");
+  if (!fs.existsSync(imagesDir)) {
+    fs.mkdirSync(imagesDir, { recursive: true });
+  }
+  return imagesDir;
+};
+
 // Admin middleware - checks if user is an admin
 const isAdmin = (req, res, next) => {
   if (req.user.role !== "admin") {
@@ -49,7 +58,7 @@ router.get("/:id", (req, res) => {
 
 // Create new product (admin only)
 router.post("/", authRoutes.authenticateToken, isAdmin, (req, res) => {
-  const { name, price, rfidTag, quantity } = req.body;
+  const { name, price, rfidTag, quantity, weight, image } = req.body;
 
   if (!name || !price || !rfidTag || quantity === undefined) {
     return res
@@ -77,6 +86,8 @@ router.post("/", authRoutes.authenticateToken, isAdmin, (req, res) => {
     price: parseFloat(price),
     rfidTag,
     quantity: parseInt(quantity),
+    weight: weight ? parseFloat(weight) : undefined,
+    image: image || undefined,
   };
 
   products.push(newProduct);
@@ -87,7 +98,7 @@ router.post("/", authRoutes.authenticateToken, isAdmin, (req, res) => {
 
 // Update product (admin only)
 router.put("/:id", authRoutes.authenticateToken, isAdmin, (req, res) => {
-  const { name, price, rfidTag, quantity } = req.body;
+  const { name, price, rfidTag, quantity, weight, image } = req.body;
   const products = getProductsFromFile();
   const productIndex = products.findIndex((p) => p.id === req.params.id);
 
@@ -116,6 +127,9 @@ router.put("/:id", authRoutes.authenticateToken, isAdmin, (req, res) => {
       quantity !== undefined
         ? parseInt(quantity)
         : products[productIndex].quantity,
+    weight:
+      weight !== undefined ? parseFloat(weight) : products[productIndex].weight,
+    image: image !== undefined ? image : products[productIndex].image,
   };
 
   saveProductsToFile(products);
@@ -133,8 +147,25 @@ router.delete("/:id", authRoutes.authenticateToken, isAdmin, (req, res) => {
   }
 
   const deletedProduct = products[productIndex];
-  products.splice(productIndex, 1);
 
+  // If product has an image, try to delete it
+  if (deletedProduct.image) {
+    const imagePath = path.join(
+      __dirname,
+      "..",
+      "public",
+      deletedProduct.image
+    );
+    if (fs.existsSync(imagePath)) {
+      try {
+        fs.unlinkSync(imagePath);
+      } catch (error) {
+        console.error("Failed to delete image file:", error);
+      }
+    }
+  }
+
+  products.splice(productIndex, 1);
   saveProductsToFile(products);
 
   res.json({
@@ -154,5 +185,81 @@ router.get("/rfid/:tag", (req, res) => {
 
   res.json(product);
 });
+
+// Upload product image (admin only)
+router.post(
+  "/upload-image/:id",
+  authRoutes.authenticateToken,
+  isAdmin,
+  (req, res) => {
+    if (!req.files || !req.files.image) {
+      return res.status(400).json({ message: "No image file provided" });
+    }
+
+    const products = getProductsFromFile();
+    const productId = req.params.id;
+    const productIndex = products.findIndex((p) => p.id === productId);
+
+    if (productIndex === -1) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    const imageFile = req.files.image;
+    const fileExtension = path.extname(imageFile.name).toLowerCase();
+
+    // Validate file type
+    const allowedExtensions = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
+    if (!allowedExtensions.includes(fileExtension)) {
+      return res.status(400).json({
+        message: "Invalid file type. Only JPG, PNG, GIF and WEBP are allowed",
+      });
+    }
+
+    // Create a unique filename
+    const imagesDir = ensureImagesDirectory();
+    const filename = `product_${productId}_${Date.now()}${fileExtension}`;
+    const filePath = path.join(imagesDir, filename);
+    const relativePath = `/images/${filename}`;
+
+    try {
+      // Move the file to the images directory
+      imageFile.mv(filePath, (err) => {
+        if (err) {
+          console.error("Error saving image:", err);
+          return res.status(500).json({ message: "Failed to save image" });
+        }
+
+        // Delete old image if exists
+        if (products[productIndex].image) {
+          const oldImagePath = path.join(
+            __dirname,
+            "..",
+            "public",
+            products[productIndex].image
+          );
+          if (fs.existsSync(oldImagePath)) {
+            try {
+              fs.unlinkSync(oldImagePath);
+            } catch (error) {
+              console.error("Failed to delete old image:", error);
+            }
+          }
+        }
+
+        // Update product with new image path
+        products[productIndex].image = relativePath;
+        saveProductsToFile(products);
+
+        res.json({
+          message: "Image uploaded successfully",
+          product: products[productIndex],
+        });
+      });
+    } catch (error) {
+      console.error("Failed to process image:", error);
+      res.status(500).json({ message: "Failed to process image" });
+    }
+  }
+);
 
 module.exports = router;
