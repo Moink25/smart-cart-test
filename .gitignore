@@ -1,0 +1,14 @@
+./client/node_modules
+./client/dist
+./client/build
+./client/public/uploads
+./client/public/uploads/*
+./server/uploads
+./server/uploads/*
+./server/node_modules
+./server/dist
+./server/build
+./server/.env
+
+
+
