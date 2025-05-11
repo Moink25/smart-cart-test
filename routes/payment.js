@@ -44,12 +44,32 @@ const razorpay = new Razorpay({
 // Create order for payment
 router.post("/create-order", authRoutes.authenticateToken, async (req, res) => {
   try {
+    // Log authenticated user info for debugging
+    console.log("User authenticated for payment:", req.user);
+
     // Get user's cart
     const carts = getCartsFromFile();
-    const userCart = carts.find((cart) => cart.userId === req.user.id);
+    console.log("All carts:", carts);
 
-    if (!userCart || userCart.items.length === 0) {
+    const userCart = carts.find((cart) => cart.userId === req.user.id);
+    console.log("User cart found:", userCart);
+
+    // If no cart exists for the user, create an empty one to avoid errors
+    if (!userCart) {
+      console.log("No cart found for user, responding with error");
+      return res.status(400).json({ message: "Cart is empty or not found" });
+    }
+
+    // Validate cart items
+    if (!userCart.items || userCart.items.length === 0) {
+      console.log("Cart exists but is empty");
       return res.status(400).json({ message: "Cart is empty" });
+    }
+
+    // Validate cart total
+    if (!userCart.total || userCart.total <= 0) {
+      console.log("Invalid cart total:", userCart.total);
+      return res.status(400).json({ message: "Invalid cart total" });
     }
 
     // Create order with Razorpay
@@ -74,6 +94,7 @@ router.post("/create-order", authRoutes.authenticateToken, async (req, res) => {
       });
     } catch (razorpayError) {
       console.error("Razorpay error:", razorpayError);
+
       // Send more detailed error information for debugging
       res.status(500).json({
         message: "Failed to create Razorpay order",
