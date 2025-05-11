@@ -215,6 +215,7 @@ router.post("/device/rfid-scan", (req, res) => {
     rfidTag,
     action,
     deviceId,
+    userId,
     timestamp: new Date().toISOString(),
   });
 
@@ -261,7 +262,7 @@ router.post("/device/rfid-scan", (req, res) => {
     });
   }
 
-  // Update inventory
+  // Update inventory (only if non-test tag)
   if (action === "add") {
     product.quantity -= 1;
   } else if (action === "remove") {
@@ -271,7 +272,18 @@ router.post("/device/rfid-scan", (req, res) => {
 
   // Update cart
   const carts = getCartsFromFile();
-  const cartIndex = carts.findIndex((cart) => cart.userId === userId);
+
+  // First check if this device is already connected to a user
+  const connectedCart = carts.find((cart) => cart.deviceId === deviceId);
+
+  // If device is connected to a user, use that user's cart
+  const effectiveUserId = connectedCart ? connectedCart.userId : userId;
+
+  const cartIndex = carts.findIndex((cart) => cart.userId === effectiveUserId);
+
+  console.log(
+    `Cart operation: User ${effectiveUserId}, Device ${deviceId}, Operation: ${action}, Product: ${product.name}`
+  );
 
   let updatedCart;
 
@@ -279,19 +291,26 @@ router.post("/device/rfid-scan", (req, res) => {
     // Create new cart with ID
     const newCart = {
       id: `cart_${Date.now()}`,
-      userId: userId,
+      userId: effectiveUserId,
       deviceId: deviceId || null,
       items: [{ ...product, quantity: 1 }],
       total: product.price,
     };
     carts.push(newCart);
     updatedCart = newCart;
+
+    console.log(
+      `Created new cart for user ${effectiveUserId} with device ${deviceId}`
+    );
   } else if (cartIndex !== -1) {
     const cart = carts[cartIndex];
 
     // Add deviceId if not present
     if (deviceId && !cart.deviceId) {
       cart.deviceId = deviceId;
+      console.log(
+        `Associated device ${deviceId} with existing cart for user ${effectiveUserId}`
+      );
     }
 
     // Add cart ID if not present
@@ -304,15 +323,19 @@ router.post("/device/rfid-scan", (req, res) => {
     if (action === "add") {
       if (itemIndex === -1) {
         cart.items.push({ ...product, quantity: 1 });
+        console.log(`Added new product ${product.name} to cart`);
       } else {
         cart.items[itemIndex].quantity += 1;
+        console.log(`Increased quantity of ${product.name} in cart`);
       }
       cart.total = parseFloat((cart.total + product.price).toFixed(2));
     } else if (action === "remove" && itemIndex !== -1) {
       if (cart.items[itemIndex].quantity > 1) {
         cart.items[itemIndex].quantity -= 1;
+        console.log(`Decreased quantity of ${product.name} in cart`);
       } else {
         cart.items.splice(itemIndex, 1);
+        console.log(`Removed ${product.name} from cart`);
       }
       cart.total = parseFloat((cart.total - product.price).toFixed(2));
 
@@ -320,16 +343,22 @@ router.post("/device/rfid-scan", (req, res) => {
       if (cart.items.length === 0) {
         carts.splice(cartIndex, 1);
         saveCartsToFile(carts);
+        console.log(
+          `Cart for user ${effectiveUserId} is now empty and has been removed`
+        );
         return res.json({
           success: true,
           message: `Product ${
             action === "add" ? "added to" : "removed from"
           } cart`,
-          cart: { id: cart.id, userId: userId, items: [], total: 0 },
+          cart: { id: cart.id, userId: effectiveUserId, items: [], total: 0 },
           product,
         });
       }
     } else if (action === "remove" && itemIndex === -1) {
+      console.log(
+        `Attempted to remove ${product.name} but it's not in the cart`
+      );
       return res.status(404).json({
         success: false,
         message: "Item not found in cart",
@@ -338,6 +367,9 @@ router.post("/device/rfid-scan", (req, res) => {
 
     updatedCart = cart;
   } else if (cartIndex === -1 && action === "remove") {
+    console.log(
+      `Attempted to remove from non-existent cart for user ${effectiveUserId}`
+    );
     return res.status(404).json({
       success: false,
       message: "Cart not found",
@@ -348,18 +380,21 @@ router.post("/device/rfid-scan", (req, res) => {
 
   // Notify connected clients via socket if available
   if (req.app.io) {
+    console.log(`Emitting socket events for cart update`);
     req.app.io.emit("product_scanned", {
       product,
       action,
-      userId,
+      userId: effectiveUserId,
       deviceId,
     });
 
     req.app.io.emit("cart_updated", {
-      userId,
+      userId: effectiveUserId,
       carts,
     });
   }
+
+  console.log(`Successfully processed RFID scan for ${product.name}`);
 
   res.json({
     success: true,
@@ -375,18 +410,24 @@ router.post("/rfid-scan", (req, res) => {
   // Forward to the device endpoint handler
   const { rfidTag, action = "add", deviceId } = req.body;
 
+  console.log(`RFID scan request received at /rfid-scan:`, req.body);
+
   // If this has a token but no deviceId, it's likely a regular user request
   if (req.headers.authorization && !deviceId) {
+    console.log("Authenticated user RFID scan request detected");
     // Authenticate and handle as a user request
     authRoutes.authenticateToken(req, res, () => {
       // Use the user's ID from the token
       req.body.userId = req.user.id;
+      console.log(`Authenticated as user ${req.user.id}`);
       // Handle like the regular RFID scan endpoint
       handleUserRfidScan(req, res);
     });
   } else {
     // Handle as a device request
-    console.log("Handling HTTP request from NodeMCU device");
+    console.log(
+      "Handling HTTP request from NodeMCU device or unauthenticated request"
+    );
     // Forward to the device endpoint handler
     req.url = "/device/rfid-scan";
     req.app._router.handle(req, res);
